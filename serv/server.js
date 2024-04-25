@@ -27,6 +27,20 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
+const secretKey = "1111"; // Секретний ключ для авторизації
+
+// Функція для перевірки прав доступу до додавання альбомів
+const checkAuthorization = (req, res, next) => {
+    const { authorization } = req.headers;
+    if (authorization && authorization === secretKey) {
+        // Користувач має права доступу
+        next();
+    } else {
+        // Користувач не авторизований або неправильний секретний ключ
+        res.status(401).send('Не авторизований');
+    }
+};
+
 app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3000');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE');
@@ -34,50 +48,74 @@ app.use((req, res, next) => {
     next();
 });
 
-// Додайте цю строку для обробки статичних файлів з папки uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+app.post('/api/login', (req, res) => {
+    const { password } = req.body;
+    if (!password) {
+        res.status(400).send('Не вказано пароль');
+    } else if (password === secretKey) {
+        res.status(200).send('Успішний вхід');
+    } else {
+        res.status(401).send('Неправильний пароль');
+    }
+});
 
 app.route('/api/albums')
     .get((req, res) => {
-        const { type } = req.query;
+        const { type, sort, searchArtist, searchAlbum, searchCountry, searchYear } = req.query;
         console.log("Тип запиту:", type);
+        console.log("Параметр сортування:", sort);
+        console.log("Пошук виконавця:", searchArtist);
+        console.log("Пошук альбому:", searchAlbum);
+        console.log("Пошук країни:", searchCountry);
+        console.log("Пошук за рік:", searchYear);
 
+        let sql;
         if (type === 'listened') {
-            let sql = "SELECT * FROM albums WHERE listened = 1";
-            db.all(sql, (err, rows) => {
-                if (err) {
-                    console.error(err.message);
-                    res.status(500).send('Помилка сервера');
-                } else {
-                    console.log("Результат запиту до бази даних:", rows);
-                    res.json(rows);
-                }
-            });
+            sql = `SELECT * FROM albums WHERE listened = 1`;
         } else if (type === 'to-listen') {
-            let sql = "SELECT * FROM albums WHERE listened = 2"; // Змінено на 2 для ще треба прослухати
-            db.all(sql, (err, rows) => {
-                if (err) {
-                    console.error(err.message);
-                    res.status(500).send('Помилка сервера');
-                } else {
-                    console.log("Результат запиту до бази даних:", rows);
-                    res.json(rows);
-                }
-            });
+            sql = `SELECT * FROM albums WHERE listened = 2`;
         } else {
             res.status(400).send('Неправильний запит');
+            return;
         }
+
+        if (searchArtist) {
+            sql += ` AND artist LIKE '%${searchArtist}%'`;
+        }
+        if (searchAlbum) {
+            sql += ` AND album LIKE '%${searchAlbum}%'`;
+        }
+        if (searchCountry) {
+            sql += ` AND country LIKE '%${searchCountry}%'`;
+        }
+        if (searchYear) {
+            sql += ` AND year = ${searchYear}`;
+        }
+
+        if (sort) {
+            sql += ` ORDER BY ${sort}`;
+        }
+
+        db.all(sql, (err, rows) => {
+            if (err) {
+                console.error(err.message);
+                res.status(500).send('Помилка сервера');
+            } else {
+                console.log("Результат запиту до бази даних:", rows);
+                res.json(rows);
+            }
+        });
     })
-    .post(upload.single('cover'), (req, res) => {
+    .post(checkAuthorization, upload.single('cover'), (req, res) => { // Додано функцію перевірки авторизації
         console.log(req.body);
         const { action, listened } = req.body;
         console.log("action:", action);
         console.log("listened:", listened);
-        // Додавання нового альбому
         if (action === 'add') {
             const { artist, album, country, youtube_link, year } = req.body;
-            const listenedValue = listened || 1; // Перевіряємо та конвертуємо значення "listened"
-
+            const listenedValue = listened || 1;
             const cover = req.file ? `http://localhost:3001/uploads/${req.file.filename}` : '';
 
             console.log("Дані, які надійшли з клієнтського додатку:");
@@ -86,7 +124,7 @@ app.route('/api/albums')
             console.log("Країна:", country);
             console.log("Посилання на YouTube:", youtube_link);
             console.log("Рік:", year);
-            console.log("Чи прослуханий:", listenedValue); // Використовуємо конвертоване значення "listened"
+            console.log("Чи прослуханий:", listenedValue);
             console.log("Шлях до обкладинки:", cover);
 
             db.run("INSERT INTO albums (artist, album, cover, country, youtube_link, year, listened) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -100,9 +138,7 @@ app.route('/api/albums')
                         res.status(201).send('Альбом успішно доданий');
                     }
                 });
-        }
-        // Інші дії, наприклад, оновлення або видалення альбому, можна додати тут
-        else {
+        } else {
             res.status(400).send('Неправильний запит');
         }
     });
