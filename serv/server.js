@@ -10,7 +10,7 @@ const port = 3001;
 const db = new sqlite3.Database('./database.db');
 
 db.serialize(() => {
-    db.run("CREATE TABLE IF NOT EXISTS albums (id INTEGER PRIMARY KEY AUTOINCREMENT, artist TEXT, album TEXT, cover TEXT, country TEXT, youtube_link TEXT, year INTEGER, listened INTEGER DEFAULT 0)");
+    db.run("CREATE TABLE IF NOT EXISTS albums (id INTEGER PRIMARY KEY AUTOINCREMENT, artist TEXT, album TEXT, cover TEXT, country TEXT, youtube_link TEXT, year INTEGER, listened INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
 });
 
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -60,6 +60,24 @@ app.post('/api/login', (req, res) => {
         res.status(401).send('Неправильний пароль');
     }
 });
+app.delete('/api/albums/:id', checkAuthorization, (req, res) => {
+    const { id } = req.params;
+
+    db.run("DELETE FROM albums WHERE id = ?", id, (err) => {
+        if (err) {
+            console.error("Помилка при видаленні альбому з бази даних:", err.message);
+            res.status(500).send('Помилка сервера');
+        } else {
+            console.log("Альбом успішно видалений з бази даних");
+            res.status(200).send('Альбом успішно видалений');
+        }
+    });
+});
+app.get('/api/check-login', checkAuthorization, (req, res) => {
+    // Якщо користувач авторизований, поверніть статус 200
+    res.status(200).send('Користувач авторизований');
+});
+
 
 app.route('/api/albums')
     .get((req, res) => {
@@ -94,9 +112,9 @@ app.route('/api/albums')
             sql += ` AND year = ${searchYear}`;
         }
 
-        if (sort) {
-            sql += ` ORDER BY ${sort}`;
-        }
+        sql += ` ORDER BY id DESC`;
+
+
 
         db.all(sql, (err, rows) => {
             if (err) {
