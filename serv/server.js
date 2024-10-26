@@ -9,6 +9,7 @@ const port = 3001;
 
 const db = new sqlite3.Database('./database.db');
 
+// Створення таблиці альбомів, якщо вона не існує
 db.serialize(() => {
     db.run("CREATE TABLE IF NOT EXISTS albums (id INTEGER PRIMARY KEY AUTOINCREMENT, artist TEXT, album TEXT, cover TEXT, country TEXT, youtube_link TEXT, year INTEGER, listened INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
 });
@@ -29,18 +30,17 @@ const upload = multer({ storage: storage });
 
 const secretKey = "1111"; // Секретний ключ для авторизації
 
-// Функція для перевірки прав доступу до додавання альбомів
+// Перевірка прав доступу за допомогою секретного ключа
 const checkAuthorization = (req, res, next) => {
     const { authorization } = req.headers;
     if (authorization && authorization === secretKey) {
-        // Користувач має права доступу
         next();
     } else {
-        // Користувач не авторизований або неправильний секретний ключ
         res.status(401).send('Не авторизований');
     }
 };
 
+// Налаштування CORS для дозволу запитів із клієнтської частини
 app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3000');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE');
@@ -50,6 +50,7 @@ app.use((req, res, next) => {
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// Маршрут для входу
 app.post('/api/login', (req, res) => {
     const { password } = req.body;
     if (!password) {
@@ -60,6 +61,8 @@ app.post('/api/login', (req, res) => {
         res.status(401).send('Неправильний пароль');
     }
 });
+
+// Видалення альбому
 app.delete('/api/albums/:id', checkAuthorization, (req, res) => {
     const { id } = req.params;
 
@@ -73,78 +76,112 @@ app.delete('/api/albums/:id', checkAuthorization, (req, res) => {
         }
     });
 });
+
+// Оновлення статусу альбому (прослуханий/треба послухати)
+app.put('/api/albums/:id', checkAuthorization, (req, res) => {
+    const albumId = req.params.id;
+    const { listened } = req.body;
+
+    db.run("UPDATE albums SET listened = ? WHERE id = ?", [listened, albumId], (err) => {
+        if (err) {
+            console.error("Помилка при оновленні альбому:", err.message);
+            res.status(500).send('Помилка сервера');
+        } else {
+            console.log("Альбом успішно оновлений");
+            res.status(200).send('Альбом успішно оновлений');
+        }
+    });
+});
+
+// Перевірка авторизації користувача
 app.get('/api/check-login', checkAuthorization, (req, res) => {
-    // Якщо користувач авторизований, поверніть статус 200
     res.status(200).send('Користувач авторизований');
 });
 
+// Отримання деталей конкретного альбому
+app.get('/api/albums/:id', (req, res) => {
+    const { id } = req.params;
 
+    db.get("SELECT * FROM albums WHERE id = ?", id, (err, row) => {
+        if (err) {
+            console.error("Помилка отримання даних альбому:", err.message);
+            res.status(500).send('Помилка сервера');
+        } else {
+            if (!row) {
+                res.status(404).send('Альбом не знайдено');
+            } else {
+                console.log("Деталі альбому:", row);
+                res.json(row);
+            }
+        }
+    });
+});
+// Маршрут для переміщення альбому з "треба послухати" в "прослухане"
+app.put('/api/move-to-listened/:id', checkAuthorization, (req, res) => {
+    const albumId = req.params.id;
+
+    db.run("UPDATE albums SET listened = 1 WHERE id = ? AND listened = 2", albumId, (err) => {
+        if (err) {
+            console.error("Помилка при переміщенні альбому в 'прослухане':", err.message);
+            res.status(500).send('Помилка сервера');
+        } else {
+            console.log("Альбом успішно переміщений в 'прослухане'");
+            res.status(200).send('Альбом успішно переміщений в "прослухане"');
+        }
+    });
+});
+// Маршрут для переміщення альбому з "прослухане" в "те, що треба прослухати"
+app.put('/api/move-to-to-listen/:id', checkAuthorization, (req, res) => {
+    const albumId = req.params.id;
+
+    db.run("UPDATE albums SET listened = 2 WHERE id = ? AND listened = 1", albumId, (err) => {
+        if (err) {
+            console.error("Помилка при переміщенні альбому в 'те, що треба прослухати':", err.message);
+            res.status(500).send('Помилка сервера');
+        } else {
+            console.log("Альбом успішно переміщений в 'те, що треба прослухати'");
+            res.status(200).send('Альбом успішно переміщений в "те, що треба прослухати"');
+        }
+    });
+});
+
+// Маршрути для отримання, фільтрації та додавання альбомів
 app.route('/api/albums')
     .get((req, res) => {
         const { type, sort, searchArtist, searchAlbum, searchCountry, searchYear } = req.query;
-        console.log("Тип запиту:", type);
-        console.log("Параметр сортування:", sort);
-        console.log("Пошук виконавця:", searchArtist);
-        console.log("Пошук альбому:", searchAlbum);
-        console.log("Пошук країни:", searchCountry);
-        console.log("Пошук за рік:", searchYear);
+        let sql = type === 'listened'
+            ? `SELECT * FROM albums WHERE listened = 1`
+            : type === 'to-listen'
+                ? `SELECT * FROM albums WHERE listened = 2`
+                : null;
 
-        let sql;
-        if (type === 'listened') {
-            sql = `SELECT * FROM albums WHERE listened = 1`;
-        } else if (type === 'to-listen') {
-            sql = `SELECT * FROM albums WHERE listened = 2`;
-        } else {
+        if (!sql) {
             res.status(400).send('Неправильний запит');
             return;
         }
 
-        if (searchArtist) {
-            sql += ` AND artist LIKE '%${searchArtist}%'`;
-        }
-        if (searchAlbum) {
-            sql += ` AND album LIKE '%${searchAlbum}%'`;
-        }
-        if (searchCountry) {
-            sql += ` AND country LIKE '%${searchCountry}%'`;
-        }
-        if (searchYear) {
-            sql += ` AND year = ${searchYear}`;
-        }
+        if (searchArtist) sql += ` AND artist LIKE '%${searchArtist}%'`;
+        if (searchAlbum) sql += ` AND album LIKE '%${searchAlbum}%'`;
+        if (searchCountry) sql += ` AND country LIKE '%${searchCountry}%'`;
+        if (searchYear) sql += ` AND year = ${searchYear}`;
 
         sql += ` ORDER BY id DESC`;
-
-
 
         db.all(sql, (err, rows) => {
             if (err) {
                 console.error(err.message);
                 res.status(500).send('Помилка сервера');
             } else {
-                console.log("Результат запиту до бази даних:", rows);
                 res.json(rows);
             }
         });
     })
-    .post(checkAuthorization, upload.single('cover'), (req, res) => { // Додано функцію перевірки авторизації
-        console.log(req.body);
-        const { action, listened } = req.body;
-        console.log("action:", action);
-        console.log("listened:", listened);
+    .post(checkAuthorization, upload.single('cover'), (req, res) => {
+        const { action, listened, artist, album, country, youtube_link, year } = req.body;
+        const listenedValue = listened || 1;
+        const cover = req.file ? `http://localhost:3001/uploads/${req.file.filename}` : '';
+
         if (action === 'add') {
-            const { artist, album, country, youtube_link, year } = req.body;
-            const listenedValue = listened || 1;
-            const cover = req.file ? `http://localhost:3001/uploads/${req.file.filename}` : '';
-
-            console.log("Дані, які надійшли з клієнтського додатку:");
-            console.log("Виконавець:", artist);
-            console.log("Альбом:", album);
-            console.log("Країна:", country);
-            console.log("Посилання на YouTube:", youtube_link);
-            console.log("Рік:", year);
-            console.log("Чи прослуханий:", listenedValue);
-            console.log("Шлях до обкладинки:", cover);
-
             db.run("INSERT INTO albums (artist, album, cover, country, youtube_link, year, listened) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 [artist, album, cover, country, youtube_link, year, listenedValue],
                 (err) => {
@@ -152,7 +189,6 @@ app.route('/api/albums')
                         console.error("Помилка при виконанні INSERT-запиту до бази даних:", err.message);
                         res.status(500).send('Помилка сервера');
                     } else {
-                        console.log("Альбом успішно доданий до бази даних");
                         res.status(201).send('Альбом успішно доданий');
                     }
                 });
@@ -161,6 +197,7 @@ app.route('/api/albums')
         }
     });
 
+// Запуск сервера
 app.listen(port, () => {
     console.log(`Сервер запущений на порту ${port}`);
 });
