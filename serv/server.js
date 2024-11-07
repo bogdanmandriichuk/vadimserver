@@ -5,7 +5,7 @@ const multer = require('multer');
 const path = require('path');
 
 const app = express();
-const port = 3001;
+const port = 3002;
 
 const db = new sqlite3.Database('./database.db');
 
@@ -220,7 +220,7 @@ app.route('/api/albums')
     })
     .post(checkAuthorization, upload.single('cover'), (req, res) => {
         const { artist, album, country, year, listened, description, songs, youtube_link } = req.body;
-        const cover = req.file ? `http://localhost:3001/uploads/${req.file.filename}` : '';
+        const cover = req.file ? `http://localhost:3002/uploads/${req.file.filename}` : '';
 
         db.run(
             `INSERT INTO albums (artist, album, cover, country, year, description, songs, listened, youtube_link)
